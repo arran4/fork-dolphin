@@ -255,6 +255,8 @@ private Q_SLOTS:
     void applyChangedBalooRoles(const QString &file);
     void applyChangedBalooRolesForItem(const KFileItem &file);
 
+    void slotDirWatchDirty(const QString &path);
+
     void slotDirectoryContentsCountReceived(const QString &path, int count, long long size);
 
 private:

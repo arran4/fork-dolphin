@@ -21,6 +21,7 @@
 #include <KOverlayIconPlugin>
 #include <KPluginMetaData>
 #include <KSharedConfig>
+#include <KDirWatch>
 
 #include "dolphin_contentdisplaysettings.h"
 
@@ -109,6 +110,11 @@ KFileItemModelRolesUpdater::KFileItemModelRolesUpdater(KFileItemModel *model, QO
     m_recentlyChangedItemsTimer->setInterval(100ms);
     m_recentlyChangedItemsTimer->setSingleShot(true);
     connect(m_recentlyChangedItemsTimer, &QTimer::timeout, this, &KFileItemModelRolesUpdater::resolveRecentlyChangedItems);
+
+    // KDirWatch tracks the directories of the model. When attributes change (e.g. via extended attributes like tags),
+    // KDirWatch emits dirty() for the changed file's path. KFileItemModelRolesUpdater intercepts this and
+    // triggers a role resolution (like Baloo::FileMonitor does), useful when Baloo is not actively tracking it.
+    connect(KDirWatch::self(), &KDirWatch::dirty, this, &KFileItemModelRolesUpdater::slotDirWatchDirty);
 
     m_resolvableRoles.insert("size");
     m_resolvableRoles.insert("type");
@@ -807,6 +813,26 @@ void KFileItemModelRolesUpdater::resolveRecentlyChangedItems()
     m_changedItems += m_recentlyChangedItems;
     m_recentlyChangedItems.clear();
     updateChangedItems();
+}
+
+void KFileItemModelRolesUpdater::slotDirWatchDirty(const QString &path)
+{
+    // When KDirWatch emits dirty() for a file inside our current view,
+    // this indicates that its metadata (or contents) changed. Since KCoreDirLister
+    // may not always emit refreshItems for pure attribute changes, we intercept it here
+    // and queue an update for the item's roles (including tags, comments, rating, etc).
+    if (m_state == Paused) {
+        return;
+    }
+
+    const KFileItem item = m_model->fileItem(QUrl::fromLocalFile(path));
+    if (!item.isNull()) {
+        // By adding it to m_changedItems, we trigger a re-resolve of all its roles.
+        m_changedItems.insert(item);
+        if (!m_recentlyChangedItemsTimer->isActive()) {
+            m_recentlyChangedItemsTimer->start();
+        }
+    }
 }
 
 void KFileItemModelRolesUpdater::applyChangedBalooRoles(const QString &file)
